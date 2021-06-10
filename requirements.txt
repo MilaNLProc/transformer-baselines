@@ -1,3 +1,4 @@
 transformers==4.2.2
 sklearn
 tqdm
+torch
