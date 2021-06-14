@@ -4,7 +4,8 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from .tasks import ClassificationTask
 from .dataset import TokenizingDataset
-
+import torch
+from tqdm import tqdm
 
 class Tuner:
     def __init__(self, base_encoder: str, base_tokenizer: str) -> None:
@@ -30,7 +31,7 @@ class Tuner:
         # initialize tasks and collect labels
         labels = list()
         for t in tasks:
-            task.initialize()
+            t.initialize()
             labels.append(t.labels)
 
         # our datasets will use a Tuple as "labels" in the batch
@@ -53,12 +54,15 @@ class Tuner:
         model.train()
 
         # TODO define a training - validation split using "val_size" % of the data
-
-        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+        learning_rate = 0.001 # TODO: placeholder
+        epochs = 10 # TODO: placeholder
+        batch_size = 4 # TODO: palcholder
+        train_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
         optim = AdamW(model.parameters(), lr=learning_rate)
 
         pbar = tqdm(total=epochs, position=0, leave=True)
+
         for epoch in range(epochs):
             pbar.update(1)
             for batch in train_loader:
@@ -67,9 +71,10 @@ class Tuner:
                 attention_mask = batch["attention_mask"].to(self.device)
 
                 outputs = model(input_ids, attention_mask=attention_mask)
+                loss = 0
 
-                # TODO manually compute a loss per-head output & sum them
-                # loss = ...
+                for output, t in zip(outputs, tasks):
+                    loss = + t.loss(batch["labels"], output)
 
                 loss.backward()
                 optim.step()
@@ -91,6 +96,7 @@ class DummyModel(nn.Module):
     """
 
     def __init__(self, encoder, heads) -> None:
+        super().__init__()
         self.encoder = encoder
         self.heads = heads
 
@@ -98,4 +104,4 @@ class DummyModel(nn.Module):
         out = self.encoder(input_ids, **encoder_kwargs)
 
         # TODO produce per-head output
-        raise NotImplementedError()
+        raise [h(out) for h in self.heads]
