@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Dict
 from transformers import AutoConfig, AutoTokenizer, AutoModel, AdamW
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -6,6 +6,7 @@ from .tasks import ClassificationTask
 from .dataset import TokenizingDataset
 import torch
 from tqdm import tqdm
+
 
 class Tuner:
     def __init__(self, base_encoder: str, base_tokenizer: str) -> None:
@@ -20,7 +21,8 @@ class Tuner:
         texts: List[str],
         tasks: List,
         optimize: str = "memory",
-        val_size=0.2,
+        validation_texts: List[str] = None,
+        validation_split: float = 0.2,
         **training_args
     ):
 
@@ -34,11 +36,7 @@ class Tuner:
             t.initialize()
             labels.append(t.labels)
 
-        # our datasets will use a Tuple as "labels" in the batch
-        labels = zip(labels)
-
         if optimize == "memory":
-            # tokenized texts on the fly
             dataset = TokenizingDataset(
                 texts, labels, tokenizer, trucation=True, padding=True
             )
@@ -48,22 +46,22 @@ class Tuner:
         else:
             raise NotImplementedError()
 
-        model = DummyModel(encoder, [t.head for t in tasks])
+        model = MultiHeadModel(encoder, [t.head for t in tasks])
 
         model.to(self.device)
         model.train()
 
-        # TODO define a training - validation split using "val_size" % of the data
-        learning_rate = 0.001 # TODO: placeholder
-        epochs = 10 # TODO: placeholder
-        batch_size = 4 # TODO: palcholder
-        train_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+        training_args = TrainingArgs(training_args)
+        train_loader = DataLoader(
+            dataset, batch_size=training_args["batch_size"], shuffle=True
+        )
 
-        optim = AdamW(model.parameters(), lr=learning_rate)
+        optim = AdamW(model.parameters(), lr=training_args["learning_rate"])
 
-        pbar = tqdm(total=epochs, position=0, leave=True)
+        pbar = tqdm(total=training_args["max_epochs"], position=0, leave=True)
 
-        for epoch in range(epochs):
+        for epoch in range(training_args["max_epochs"]):
+
             pbar.update(1)
             for batch in train_loader:
                 optim.zero_grad()
@@ -73,12 +71,15 @@ class Tuner:
                 outputs = model(input_ids, attention_mask=attention_mask)
                 loss = 0
 
-                for output, t in zip(outputs, tasks):
-                    loss = + t.loss(batch["labels"], output)
+                for output, targets, t in zip(outputs, batch["labels"], tasks):
+                    loss += t.loss(targets, output)
 
                 loss.backward()
                 optim.step()
+
         pbar.close()
+
+        return model
 
     def predict(self, texts):
         raise NotImplementedError()
@@ -90,7 +91,7 @@ class Tuner:
         raise NotImplementedError()
 
 
-class DummyModel(nn.Module):
+class MultiHeadModel(nn.Module):
     """
     Build a composite model made of a base encoder and several classification heads.
     """
@@ -102,6 +103,16 @@ class DummyModel(nn.Module):
 
     def forward(self, input_ids: dict, **encoder_kwargs):
         out = self.encoder(input_ids, **encoder_kwargs)
+        return [h(out) for h in self.heads]
 
-        # TODO produce per-head output
-        raise [h(out) for h in self.heads]
+
+class TrainingArgs:
+    DEFAULT_ARGS = {"learning_rate": 2e-5, "max_epochs": 10, "batch_size": 16}
+
+    def __init__(self, training_args: Dict) -> None:
+        self.args = TrainingArgs.DEFAULT_ARGS
+        for k, v in training_args.items():
+            self.args[k] = v
+
+    def __get_item__(self, name):
+        return self.args[name]
