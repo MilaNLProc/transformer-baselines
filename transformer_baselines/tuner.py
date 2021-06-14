@@ -2,8 +2,8 @@ from typing import List, Dict
 from transformers import AutoConfig, AutoTokenizer, AutoModel, AdamW
 import torch.nn as nn
 from torch.utils.data import DataLoader
-from .tasks import ClassificationTask
-from .dataset import TokenizingDataset
+from transformer_baselines.tasks import ClassificationTask
+from transformer_baselines.dataset import TokenizingDataset, OptimizedTaskDataset
 import torch
 from tqdm import tqdm
 
@@ -33,16 +33,21 @@ class Tuner:
         # initialize tasks and collect labels
         labels = list()
         for t in tasks:
-            t.initialize()
+            t.initialize(self.device)
             labels.append(t.labels)
 
         if optimize == "memory":
             dataset = TokenizingDataset(
-                texts, labels, tokenizer, trucation=True, padding=True
+                texts, labels, tokenizer, padding=True, return_tensors='pt'
             )
         elif optimize == "compute":
             # tokenize everything upfront
-            raise NotImplementedError()
+
+            encodings = tokenizer(texts, truncation=True, padding=True, return_tensors='pt')
+
+            dataset = OptimizedTaskDataset(
+                encodings, labels
+            )
         else:
             raise NotImplementedError()
 
@@ -64,16 +69,21 @@ class Tuner:
 
             pbar.update(1)
             for batch in train_loader:
+
                 optim.zero_grad()
+
                 input_ids = batch["input_ids"].to(self.device)
+
                 attention_mask = batch["attention_mask"].to(self.device)
+                batch["labels"][0] = batch["labels"][0].to(self.device)
+                labels = batch["labels"]
 
                 outputs = model(input_ids, attention_mask=attention_mask)
-                loss = 0
+                loss = torch.tensor(0.0)
 
-                for output, targets, t in zip(outputs, batch["labels"], tasks):
-                    loss += t.loss(targets, output)
+                for output, label, t in zip(outputs, labels, tasks):
 
+                    loss = t.loss(label, output)
                 loss.backward()
                 optim.step()
 
@@ -102,17 +112,21 @@ class MultiHeadModel(nn.Module):
         self.heads = heads
 
     def forward(self, input_ids: dict, **encoder_kwargs):
-        out = self.encoder(input_ids, **encoder_kwargs)
+        out = self.encoder(input_ids, **encoder_kwargs)[1]
         return [h(out) for h in self.heads]
 
 
 class TrainingArgs:
-    DEFAULT_ARGS = {"learning_rate": 2e-5, "max_epochs": 10, "batch_size": 16}
+    DEFAULT_ARGS = {"learning_rate": 2e-5, "max_epochs": 10, "batch_size": 4}
 
     def __init__(self, training_args: Dict) -> None:
         self.args = TrainingArgs.DEFAULT_ARGS
         for k, v in training_args.items():
             self.args[k] = v
 
-    def __get_item__(self, name):
+    def __getitem__(self, name):
         return self.args[name]
+
+
+
+

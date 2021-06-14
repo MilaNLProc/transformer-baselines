@@ -5,8 +5,6 @@
 
 import unittest
 
-from transformer_baselines import transformer_baselines
-
 
 class TestTransformer_baselines(unittest.TestCase):
     """Tests for `transformer_baselines` package."""

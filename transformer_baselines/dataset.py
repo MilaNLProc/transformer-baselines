@@ -3,18 +3,18 @@ import torch
 from typing import List
 
 
-class SingleTaskDataset(Dataset):
+class OptimizedTaskDataset(Dataset):
     def __init__(self, encodings, labels):
         self.encodings = encodings
         self.labels = labels
 
     def __getitem__(self, idx):
         item = {key: torch.tensor(val[idx]) for key, val in self.encodings.items()}
-        item["labels"] = torch.tensor(self.labels[idx])
+        item["labels"] = [t[idx] for t in self.labels]
         return item
 
     def __len__(self):
-        return len(self.labels)
+        return len(self.labels[0])
 
 
 class TokenizingDataset(Dataset):
@@ -27,9 +27,11 @@ class TokenizingDataset(Dataset):
         self.labels = labels
 
     def __getitem__(self, idx):
+
         item = self.tokenizer(self.texts[idx], **self.tokenizer_kwargs)
+
         item["labels"] = torch.tensor([t[idx] for t in self.labels])
         return item
 
     def __len__(self):
-        return len(self.labels)
+        return len(self.labels[0])
