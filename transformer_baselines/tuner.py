@@ -51,17 +51,17 @@ class Tuner:
         else:
             raise NotImplementedError()
 
-        model = MultiHeadModel(encoder, [t.head for t in tasks])
+        self.model = MultiHeadModel(encoder, [t.head for t in tasks])
 
-        model.to(self.device)
-        model.train()
+        self.model.to(self.device)
+        self.model.train()
 
         training_args = TrainingArgs(training_args)
         train_loader = DataLoader(
             dataset, batch_size=training_args["batch_size"], shuffle=True
         )
 
-        optim = AdamW(model.parameters(), lr=training_args["learning_rate"])
+        optim = AdamW(self.model.parameters(), lr=training_args["learning_rate"])
 
         pbar = tqdm(total=training_args["max_epochs"], position=0, leave=True)
 
@@ -75,24 +75,58 @@ class Tuner:
                 input_ids = batch["input_ids"].to(self.device)
 
                 attention_mask = batch["attention_mask"].to(self.device)
-                batch["labels"][0] = batch["labels"][0].to(self.device)
+                for i in range(0, len(batch["labels"])):
+                    batch["labels"][i] = batch["labels"][i].to(self.device)
+
                 labels = batch["labels"]
 
-                outputs = model(input_ids, attention_mask=attention_mask)
-                loss = torch.tensor(0.0)
+                outputs = self.model(input_ids, attention_mask=attention_mask)
+                loss = torch.tensor(0., device=self.device)
 
                 for output, label, t in zip(outputs, labels, tasks):
+                    loss += t.loss(label, output)
 
-                    loss = t.loss(label, output)
                 loss.backward()
                 optim.step()
 
         pbar.close()
 
-        return model
+        return self.model
 
-    def predict(self, texts):
-        raise NotImplementedError()
+    def predict(self, texts, optimize: str = "memory", **training_args):
+        tokenizer = AutoTokenizer.from_pretrained(self.base_tokenizer)
+
+        if optimize == "memory":
+            raise NotImplementedError()
+        elif optimize == "compute":
+            # tokenize everything upfront
+
+            encodings = tokenizer(texts, truncation=True, padding=True, return_tensors='pt')
+
+            dataset = OptimizedTaskDataset(
+                encodings
+            )
+        else:
+            raise NotImplementedError()
+
+        training_args = TrainingArgs(training_args)
+        train_loader = DataLoader(
+            dataset, batch_size=training_args["batch_size"]
+        )
+        self.model.eval()
+        collect_outputs = [[],[]] # TODO: MALE
+        for batch in train_loader:
+
+            input_ids = batch["input_ids"].to(self.device)
+
+            attention_mask = batch["attention_mask"].to(self.device)
+
+            outputs = self.model(input_ids, attention_mask=attention_mask)
+
+            for i in range(0, len(outputs)):
+                collect_outputs[i].extend(torch.argmax(outputs[i], axis=1).detach().cpu().numpy().tolist())
+
+        return collect_outputs
 
     def score(self, texts):
         raise NotImplementedError()
@@ -117,7 +151,7 @@ class MultiHeadModel(nn.Module):
 
 
 class TrainingArgs:
-    DEFAULT_ARGS = {"learning_rate": 2e-5, "max_epochs": 10, "batch_size": 4}
+    DEFAULT_ARGS = {"learning_rate": 2e-5, "max_epochs": 20, "batch_size": 4}
 
     def __init__(self, training_args: Dict) -> None:
         self.args = TrainingArgs.DEFAULT_ARGS
@@ -126,7 +160,6 @@ class TrainingArgs:
 
     def __getitem__(self, name):
         return self.args[name]
-
 
 
 
