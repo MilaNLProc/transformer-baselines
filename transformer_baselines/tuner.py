@@ -170,7 +170,6 @@ class MultiHeadModel(pl.LightningModule):
         return [t(out) for t in self.heads]
 
     def training_step(self, batch, batch_idx):
-        print(self.heads[0].weight)
         input_ids = batch["input_ids"]
         attention_mask = batch["attention_mask"]
         labels = batch["labels"]
@@ -187,12 +186,5 @@ class MultiHeadModel(pl.LightningModule):
         return loss
 
     def configure_optimizers(self):
-        params = [{"params": self.encoder.parameters()}]
-        for t in self.heads:
-            params.append({"params": t.parameters()})
-
-        optim = AdamW(params, lr=self.hparams.learning_rate)
+        optim = AdamW(self.parameters(), lr=self.hparams.learning_rate)
         return optim
-
-
-
