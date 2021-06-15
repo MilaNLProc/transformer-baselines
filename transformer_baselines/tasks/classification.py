@@ -20,7 +20,7 @@ class ClassificationTask:
 
         self.head = AutoModelForSequenceClassification.from_pretrained(
             self.model_name, config=config
-        ).classifier.to(device)
+        ).classifier
 
     def loss(self, labels, logits):
         loss = self.loss_function(logits.view(-1, self.num_labels), labels.view(-1))
