@@ -161,14 +161,16 @@ class MultiHeadModel(pl.LightningModule):
         super().__init__()
         self.encoder = encoder
         self.tasks = tasks
+        self.heads = nn.ModuleList([t.head for t in tasks])
 
         self.save_hyperparameters("learning_rate")
 
     def forward(self, input_ids: dict, **encoder_kwargs):
         out = self.encoder(input_ids, **encoder_kwargs)[1]
-        return [t.head(out) for t in self.tasks]
+        return [t(out) for t in self.heads]
 
     def training_step(self, batch, batch_idx):
+        print(self.heads[0].weight)
         input_ids = batch["input_ids"]
         attention_mask = batch["attention_mask"]
         labels = batch["labels"]
@@ -186,8 +188,16 @@ class MultiHeadModel(pl.LightningModule):
 
     def configure_optimizers(self):
         params = [{"params": self.encoder.parameters()}]
-        for t in self.tasks:
-            params.append({"params": t.head.parameters()})
+        for t in self.heads:
+            params.append({"params": t.parameters()})
 
         optim = AdamW(params, lr=self.hparams.learning_rate)
         return optim
+
+
+ct = ClassificationTask("bert-base-uncased", [0, 1, 0, 1, 0, 1, 0, 1])
+cv = ClassificationTask("bert-base-uncased", [1, 0, 1, 0, 1, 0, 1, 0])
+t = Tuner("bert-base-uncased", "bert-base-uncased")
+
+t.fit(["test", "gigi"]*4, [ct, cv], optimize="compute")
+print(t.predict(["test", "gigi"]*4, optimize="compute"))
