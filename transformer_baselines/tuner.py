@@ -92,7 +92,9 @@ class Tuner:
         training_args.pop("learning_rate")
         training_args.pop("batch_size")
 
-        trainer = pl.Trainer(gpus=gpus, **training_args)
+        trainer = pl.Trainer(
+            gpus=gpus, logger=False, checkpoint_callback=False, **training_args
+        )
         trainer.fit(self.model, train_loader)
 
         return self.model
