@@ -4,13 +4,13 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from transformer_baselines.tasks import ClassificationTask
 from transformer_baselines.dataset import (
-    TokenizingDataset,
     OptimizedTaskDataset,
     build_optimized_memory_dataset,
 )
 import torch
 from tqdm import tqdm
 import logging
+import pytorch_lightning as pl
 
 
 logging.basicConfig(
@@ -74,51 +74,30 @@ class Tuner:
         else:
             raise ValueError(f"'optimize' value {optimize} is not supported.")
 
-        self.model = MultiHeadModel(encoder, [t.head for t in tasks])
+        #  TODO handling training args is still WIP
+        training_args = self.prepare_training_args(training_args)
 
-        self.model.to(self.device)
-        self.model.train()
-
-        training_args = TrainingArgs(training_args)
         train_loader = DataLoader(
             dataset, batch_size=training_args["batch_size"], shuffle=True
         )
 
-        optim = AdamW(self.model.parameters(), lr=training_args["learning_rate"])
-
-        pbar = tqdm(
-            total=training_args["max_epochs"], position=0, leave=True, desc="Epochs"
+        self.model = MultiHeadModel(
+            encoder=encoder,
+            tasks=tasks,
+            learning_rate=training_args["learning_rate"],
         )
 
-        for epoch in range(training_args["max_epochs"]):
+        # TODO must improve next 3 lines
+        gpus = 1 if self.device.type.startswith("cuda") else 0
+        training_args.pop("learning_rate")
+        training_args.pop("batch_size")
 
-            pbar.update(1)
-            for batch in train_loader:
-
-                optim.zero_grad()
-
-                input_ids = batch["input_ids"].to(self.device)
-
-                attention_mask = batch["attention_mask"].to(self.device)
-                for i in range(0, len(batch["labels"])):
-                    batch["labels"][i] = batch["labels"][i].to(self.device)
-
-                labels = batch["labels"]
-
-                outputs = self.model(input_ids, attention_mask=attention_mask)
-                loss = torch.tensor(0.0, device=self.device)
-
-                for output, label, t in zip(outputs, labels, tasks):
-                    loss += t.loss(label, output)
-
-                loss.backward()
-                optim.step()
-
-        pbar.close()
+        trainer = pl.Trainer(gpus=gpus, **training_args)
+        trainer.fit(self.model, train_loader)
 
         return self.model
 
-    def predict(self, texts, optimize: str = "memory", **training_args):
+    def predict(self, texts, optimize: str = "memory", **testing_args):
         tokenizer = AutoTokenizer.from_pretrained(self.base_tokenizer)
 
         if optimize == "memory":
@@ -138,22 +117,26 @@ class Tuner:
         else:
             raise NotImplementedError()
 
-        training_args = TrainingArgs(training_args)
-        train_loader = DataLoader(dataset, batch_size=training_args["batch_size"])
-        self.model.eval()
-        collect_outputs = [[], []]  # TODO: MALE
-        for batch in train_loader:
+        testing_args = self.prepare_training_args(testing_args)
+        test_loader = DataLoader(dataset, batch_size=testing_args["batch_size"])
 
-            input_ids = batch["input_ids"].to(self.device)
+        with torch.no_grad():
+            self.model.to(self.device)
+            self.model.eval()
 
-            attention_mask = batch["attention_mask"].to(self.device)
+            collect_outputs = [[], []]  # TODO: MALE
+            for batch in test_loader:
 
-            outputs = self.model(input_ids, attention_mask=attention_mask)
+                input_ids = batch["input_ids"].to(self.device)
 
-            for i in range(0, len(outputs)):
-                collect_outputs[i].extend(
-                    torch.argmax(outputs[i], axis=1).detach().cpu().numpy().tolist()
-                )
+                attention_mask = batch["attention_mask"].to(self.device)
+
+                outputs = self.model(input_ids, attention_mask=attention_mask)
+
+                for i in range(0, len(outputs)):
+                    collect_outputs[i].extend(
+                        torch.argmax(outputs[i], axis=1).detach().cpu().numpy().tolist()
+                    )
 
         return collect_outputs
 
@@ -163,29 +146,48 @@ class Tuner:
     def cross_validate(self, texts):
         raise NotImplementedError()
 
+    def prepare_training_args(self, training_args):
+        defaults = {"learning_rate": 2e-5, "max_epochs": 10, "batch_size": 4}
+        defaults.update(training_args)
+        return defaults
 
-class MultiHeadModel(nn.Module):
+
+class MultiHeadModel(pl.LightningModule):
     """
     Build a composite model made of a base encoder and several classification heads.
     """
 
-    def __init__(self, encoder, heads) -> None:
+    def __init__(self, encoder, tasks, learning_rate) -> None:
         super().__init__()
         self.encoder = encoder
-        self.heads = heads
+        self.tasks = tasks
+
+        self.save_hyperparameters("learning_rate")
 
     def forward(self, input_ids: dict, **encoder_kwargs):
         out = self.encoder(input_ids, **encoder_kwargs)[1]
-        return [h(out) for h in self.heads]
+        return [t.head(out) for t in self.tasks]
 
+    def training_step(self, batch, batch_idx):
+        input_ids = batch["input_ids"]
+        attention_mask = batch["attention_mask"]
+        labels = batch["labels"]
 
-class TrainingArgs:
-    DEFAULT_ARGS = {"learning_rate": 2e-5, "max_epochs": 20, "batch_size": 4}
+        outputs = self(input_ids, attention_mask=attention_mask)
 
-    def __init__(self, training_args: Dict) -> None:
-        self.args = TrainingArgs.DEFAULT_ARGS
-        for k, v in training_args.items():
-            self.args[k] = v
+        tasks_losses = [
+            t.loss(label, output)
+            for output, label, t in zip(outputs, labels, self.tasks)
+        ]
 
-    def __getitem__(self, name):
-        return self.args[name]
+        loss = torch.stack(tasks_losses).sum()
+
+        return loss
+
+    def configure_optimizers(self):
+        params = [{"params": self.encoder.parameters()}]
+        for t in self.tasks:
+            params.append({"params": t.head.parameters()})
+
+        optim = AdamW(params, lr=self.hparams.learning_rate)
+        return optim
