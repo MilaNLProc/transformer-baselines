@@ -3,18 +3,37 @@ from transformers import AutoConfig, AutoTokenizer, AutoModel, AdamW
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from transformer_baselines.tasks import ClassificationTask
-from transformer_baselines.dataset import TokenizingDataset, OptimizedTaskDataset
+from transformer_baselines.dataset import (
+    TokenizingDataset,
+    OptimizedTaskDataset,
+    build_optimized_memory_dataset,
+)
 import torch
 from tqdm import tqdm
+import logging
+
+
+logging.basicConfig(
+    format="%(levelname)s:%(asctime)s:%(module)s:%(message)s", level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
 
 class Tuner:
-    def __init__(self, base_encoder: str, base_tokenizer: str) -> None:
+    def __init__(self, base_encoder: str, base_tokenizer: str, device="auto") -> None:
         self.base_encoder = base_encoder
         self.base_tokenizer = base_tokenizer
-        self.device = (
-            torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-        )
+
+        if device == "auto":
+            self.device = (
+                torch.device("cuda")
+                if torch.cuda.is_available()
+                else torch.device("cpu")
+            )
+        else:
+            self.device = device
+
+        logging.info(f"Using device: {self.device}")
 
     def fit(
         self,
@@ -23,7 +42,7 @@ class Tuner:
         optimize: str = "memory",
         validation_texts: List[str] = None,
         validation_split: float = 0.2,
-        **training_args
+        **training_args,
     ):
 
         config = AutoConfig.from_pretrained(self.base_encoder)
@@ -31,25 +50,29 @@ class Tuner:
         encoder = AutoModel.from_pretrained(self.base_encoder, config=config)
 
         # initialize tasks and collect labels
-        labels = list()
+        tasks_labels = list()
         for t in tasks:
             t.initialize(self.device)
-            labels.append(t.labels)
+            tasks_labels.append(t.labels)
 
         if optimize == "memory":
-            dataset = TokenizingDataset(
-                texts, labels, tokenizer, padding=True, return_tensors='pt'
+            dataset = build_optimized_memory_dataset(
+                texts,
+                tokenizer,
+                tasks_labels,
+                padding="max_length",  #  TODO we can optimize here
+                truncation=True,
+                return_tensors="pt",
             )
+
         elif optimize == "compute":
-            # tokenize everything upfront
-
-            encodings = tokenizer(texts, truncation=True, padding=True, return_tensors='pt')
-
-            dataset = OptimizedTaskDataset(
-                encodings, labels
+            encodings = tokenizer(
+                texts, truncation=True, padding=True, return_tensors="pt"
             )
+
+            dataset = OptimizedTaskDataset(encodings, tasks_labels)
         else:
-            raise NotImplementedError()
+            raise ValueError(f"'optimize' value {optimize} is not supported.")
 
         self.model = MultiHeadModel(encoder, [t.head for t in tasks])
 
@@ -63,7 +86,9 @@ class Tuner:
 
         optim = AdamW(self.model.parameters(), lr=training_args["learning_rate"])
 
-        pbar = tqdm(total=training_args["max_epochs"], position=0, leave=True)
+        pbar = tqdm(
+            total=training_args["max_epochs"], position=0, leave=True, desc="Epochs"
+        )
 
         for epoch in range(training_args["max_epochs"]):
 
@@ -81,7 +106,7 @@ class Tuner:
                 labels = batch["labels"]
 
                 outputs = self.model(input_ids, attention_mask=attention_mask)
-                loss = torch.tensor(0., device=self.device)
+                loss = torch.tensor(0.0, device=self.device)
 
                 for output, label, t in zip(outputs, labels, tasks):
                     loss += t.loss(label, output)
@@ -97,24 +122,26 @@ class Tuner:
         tokenizer = AutoTokenizer.from_pretrained(self.base_tokenizer)
 
         if optimize == "memory":
-            raise NotImplementedError()
-        elif optimize == "compute":
-            # tokenize everything upfront
-
-            encodings = tokenizer(texts, truncation=True, padding=True, return_tensors='pt')
-
-            dataset = OptimizedTaskDataset(
-                encodings
+            dataset = build_optimized_memory_dataset(
+                texts,
+                tokenizer,
+                padding="max_length",  #  TODO we can optimize here
+                truncation=True,
+                return_tensors="pt",
             )
+        elif optimize == "compute":
+            encodings = tokenizer(
+                texts, truncation=True, padding=True, return_tensors="pt"
+            )
+
+            dataset = OptimizedTaskDataset(encodings)
         else:
             raise NotImplementedError()
 
         training_args = TrainingArgs(training_args)
-        train_loader = DataLoader(
-            dataset, batch_size=training_args["batch_size"]
-        )
+        train_loader = DataLoader(dataset, batch_size=training_args["batch_size"])
         self.model.eval()
-        collect_outputs = [[],[]] # TODO: MALE
+        collect_outputs = [[], []]  # TODO: MALE
         for batch in train_loader:
 
             input_ids = batch["input_ids"].to(self.device)
@@ -124,7 +151,9 @@ class Tuner:
             outputs = self.model(input_ids, attention_mask=attention_mask)
 
             for i in range(0, len(outputs)):
-                collect_outputs[i].extend(torch.argmax(outputs[i], axis=1).detach().cpu().numpy().tolist())
+                collect_outputs[i].extend(
+                    torch.argmax(outputs[i], axis=1).detach().cpu().numpy().tolist()
+                )
 
         return collect_outputs
 
@@ -160,6 +189,3 @@ class TrainingArgs:
 
     def __getitem__(self, name):
         return self.args[name]
-
-
-
