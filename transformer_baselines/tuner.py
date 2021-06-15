@@ -195,9 +195,4 @@ class MultiHeadModel(pl.LightningModule):
         return optim
 
 
-ct = ClassificationTask("bert-base-uncased", [0, 1, 0, 1, 0, 1, 0, 1])
-cv = ClassificationTask("bert-base-uncased", [1, 0, 1, 0, 1, 0, 1, 0])
-t = Tuner("bert-base-uncased", "bert-base-uncased")
 
-t.fit(["test", "gigi"]*4, [ct, cv], optimize="compute")
-print(t.predict(["test", "gigi"]*4, optimize="compute"))
