@@ -37,7 +37,6 @@ class Tuner:
 
     def fit(
         self,
-        texts: List[str],
         tasks: List,
         optimize: str = "memory",
         validation_texts: List[str] = None,
@@ -46,40 +45,17 @@ class Tuner:
     ):
 
         config = AutoConfig.from_pretrained(self.base_encoder)
-        tokenizer = AutoTokenizer.from_pretrained(self.base_tokenizer)
+
         encoder = AutoModel.from_pretrained(self.base_encoder, config=config)
 
         # initialize tasks and collect labels
-        tasks_labels = list()
-        for t in tasks:
-            t.initialize(self.device)
-            tasks_labels.append(t.labels)
-
-        if optimize == "memory":
-            dataset = build_optimized_memory_dataset(
-                texts,
-                tokenizer,
-                tasks_labels,
-                padding="max_length",  #  TODO we can optimize here
-                truncation=True,
-                return_tensors="pt",
-            )
-
-        elif optimize == "compute":
-            encodings = tokenizer(
-                texts, truncation=True, padding=True, return_tensors="pt"
-            )
-
-            dataset = OptimizedTaskDataset(encodings, tasks_labels)
-        else:
-            raise ValueError(f"'optimize' value {optimize} is not supported.")
 
         #  TODO handling training args is still WIP
         training_args = self.prepare_training_args(training_args)
 
-        train_loader = DataLoader(
-            dataset, batch_size=training_args["batch_size"], shuffle=True
-        )
+        # train_loader = DataLoader(
+        #     dataset, batch_size=training_args["batch_size"], shuffle=True
+        # )
 
         self.model = MultiHeadModel(
             encoder=encoder,
@@ -95,52 +71,12 @@ class Tuner:
         trainer = pl.Trainer(
             gpus=gpus, logger=False, checkpoint_callback=False, **training_args
         )
-        trainer.fit(self.model, train_loader)
+        trainer.fit(self.model)
 
         return self.model
 
     def predict(self, texts, optimize: str = "memory", **testing_args):
-        tokenizer = AutoTokenizer.from_pretrained(self.base_tokenizer)
-
-        if optimize == "memory":
-            dataset = build_optimized_memory_dataset(
-                texts,
-                tokenizer,
-                padding="max_length",  #  TODO we can optimize here
-                truncation=True,
-                return_tensors="pt",
-            )
-        elif optimize == "compute":
-            encodings = tokenizer(
-                texts, truncation=True, padding=True, return_tensors="pt"
-            )
-
-            dataset = OptimizedTaskDataset(encodings)
-        else:
-            raise NotImplementedError()
-
-        testing_args = self.prepare_training_args(testing_args)
-        test_loader = DataLoader(dataset, batch_size=testing_args["batch_size"])
-
-        with torch.no_grad():
-            self.model.to(self.device)
-            self.model.eval()
-
-            collect_outputs = [[], []]  # TODO: MALE
-            for batch in test_loader:
-
-                input_ids = batch["input_ids"].to(self.device)
-
-                attention_mask = batch["attention_mask"].to(self.device)
-
-                outputs = self.model(input_ids, attention_mask=attention_mask)
-
-                for i in range(0, len(outputs)):
-                    collect_outputs[i].extend(
-                        torch.argmax(outputs[i], axis=1).detach().cpu().numpy().tolist()
-                    )
-
-        return collect_outputs
+        raise NotImplementedError()
 
     def score(self, texts):
         raise NotImplementedError()
@@ -149,7 +85,7 @@ class Tuner:
         raise NotImplementedError()
 
     def prepare_training_args(self, training_args):
-        defaults = {"learning_rate": 2e-5, "max_epochs": 10, "batch_size": 4}
+        defaults = {"learning_rate": 2e-5, "max_epochs": 20, "batch_size": 4}
         defaults.update(training_args)
         return defaults
 
@@ -162,31 +98,50 @@ class MultiHeadModel(pl.LightningModule):
     def __init__(self, encoder, tasks, learning_rate) -> None:
         super().__init__()
         self.encoder = encoder
-        self.tasks = tasks
-        self.heads = nn.ModuleList([t.head for t in tasks])
+
+        self.heads = nn.ModuleDict({t.name: t.head for t in tasks})
+        self.tasks = {task.name: task for task in tasks}
 
         self.save_hyperparameters("learning_rate")
 
+    def train_dataloader(self):
+        loaders = []
+
+        for t in self.tasks.values():
+            loaders.append(torch.utils.data.DataLoader(t.dataset, batch_size=4))
+
+        return loaders
+
     def forward(self, input_ids: dict, **encoder_kwargs):
         out = self.encoder(input_ids, **encoder_kwargs)[1]
-        return [t(out) for t in self.heads]
+        return out
 
     def training_step(self, batch, batch_idx):
-        input_ids = batch["input_ids"]
-        attention_mask = batch["attention_mask"]
-        labels = batch["labels"]
 
-        outputs = self(input_ids, attention_mask=attention_mask)
+        loss = []
+        for inner_batch in batch:
+            input_ids = inner_batch["input_ids"]
+            attention_mask = inner_batch["attention_mask"]
+            labels = inner_batch["labels"]
 
-        tasks_losses = [
-            t.loss(label, output)
-            for output, label, t in zip(outputs, labels, self.tasks)
-        ]
+            hidden = self(input_ids, attention_mask=attention_mask)
 
-        loss = torch.stack(tasks_losses).sum()
+            output = self.heads[inner_batch["name"][0]](hidden)
 
-        return loss
+            loss.append(self.tasks[inner_batch["name"][0]].loss(labels, output))
+
+        return torch.stack(loss).sum()
 
     def configure_optimizers(self):
         optim = AdamW(self.parameters(), lr=self.hparams.learning_rate)
         return optim
+
+labels_A = [0, 1, 0, 1, 0, 1, 0, 1]
+labels_B = [1, 0, 1, 0, 1, 0, 1, 0]
+
+task_A = ClassificationTask("bert-base-uncased", texts=["test", "gigi"] * 4, labels=labels_A, optimize="compute", name="task1")
+task_B = ClassificationTask("bert-base-uncased", texts=["test", "gigi"] * 4, labels=labels_B, optimize="compute", name="task2")
+
+t = Tuner("bert-base-uncased", "bert-base-uncased")
+t.fit(tasks=[task_A, task_B], optimize="compute", batch_size=4)
+

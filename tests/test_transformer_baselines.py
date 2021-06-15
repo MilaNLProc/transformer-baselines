@@ -36,6 +36,8 @@ class TestTuner_basic(unittest.TestCase):
         )
         self.assertEqual(y_preds, [labels_A, labels_B])
 
+        del t
+
     def test_basic_multitask_memory(self):
         """Test basic case with multitask learning."""
         labels_A = [0, 1, 0, 1, 0, 1, 0, 1]
@@ -52,3 +54,8 @@ class TestTuner_basic(unittest.TestCase):
             len(y_preds), 2, "The number of label lists must be equal to tasks"
         )
         self.assertEqual(y_preds, [labels_A, labels_B])
+
+        del t
+
+if __name__ == '__main__':
+    unittest.main()
