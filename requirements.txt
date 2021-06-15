@@ -3,3 +3,4 @@ datasets==1.8.0
 sklearn
 tqdm
 torch
+pytorch-lightning==1.3.5
