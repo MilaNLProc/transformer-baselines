@@ -13,9 +13,6 @@ with open('HISTORY.rst') as history_file:
 with open('requirements.txt') as history_file:
     requirements = history_file.readlines()
 
-
-requirements = [ ]
-
 test_requirements = [ ]
 
 setup(
