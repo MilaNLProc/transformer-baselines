@@ -38,25 +38,18 @@ class OptimizedTaskDataset(Dataset):
 #         return len(self.labels)
 
 
-def build_optimized_memory_dataset(
-    texts, tokenizer, tasks_labels=None, **tokenizer_kwargs
-):
+def build_optimized_memory_dataset(texts, tokenizer, labels=None, **tokenizer_kwargs):
     data = dict()
 
     data["texts"] = texts
-    if tasks_labels:
-        for tid, labels in enumerate(tasks_labels):
-            data[f"labels_{tid}"] = labels
+    data["labels"] = labels
 
     dataset = datasets.Dataset.from_dict(data)
 
     def encode(batch):
         item = tokenizer(batch["texts"], **tokenizer_kwargs)
-
-        if tasks_labels:
-            item["labels"] = [
-                batch[f"labels_{tid}"] for tid in range(len(tasks_labels))
-            ]
+        if labels:
+            item["labels"] = batch["labels"]
 
         return item
 
