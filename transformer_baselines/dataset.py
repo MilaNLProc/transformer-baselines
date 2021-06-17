@@ -10,52 +10,68 @@ class OptimizedTaskDataset(Dataset):
         self.labels = labels
 
     def __getitem__(self, idx):
-        item = {key: torch.tensor(val[idx]) for key, val in self.encodings.items()}
+        item = {key: val[idx] for key, val in self.encodings.items()}
         if self.labels:
-            item["labels"] = [t[idx] for t in self.labels]
+            item["labels"] = torch.tensor(self.labels[idx])
         return item
 
     def __len__(self):
-        return len(self.encodings["input_ids"])
+        return self.encodings["input_ids"].shape[0]
 
 
-class TokenizingDataset(Dataset):
-    def __init__(self, texts: List[str], labels: List, tokenizer, **tokenizer_kwargs):
-        self.texts = texts
-        self.tokenizer = tokenizer
-        self.tokenizer_kwargs = tokenizer_kwargs
-        self.labels = labels
+# class TokenizingDataset(Dataset):
+#     def __init__(
+#         self, texts: List[str], labels: List, tokenizer, name, **tokenizer_kwargs
+#     ):
+#         self.texts = texts
+#         self.tokenizer = tokenizer
+#         self.tokenizer_kwargs = tokenizer_kwargs
+#         self.labels = labels
 
-    def __getitem__(self, idx):
-        item = self.tokenizer(self.texts[idx], **self.tokenizer_kwargs)
-        item["labels"] = torch.tensor([t[idx] for t in self.labels])
-        return item
+#     def __getitem__(self, idx):
+#         item = self.tokenizer(self.texts[idx], **self.tokenizer_kwargs)
+#         if self.labels:
+#             item["labels"] = torch.tensor(self.labels[idx])
+#         return item
 
-    def __len__(self):
-        return len(self.texts)
+#     def __len__(self):
+#         return len(self.labels)
 
 
-def build_optimized_memory_dataset(
-    texts, tokenizer, tasks_labels=None, **tokenizer_kwargs
-):
+def build_optimized_memory_dataset(texts, tokenizer, labels=None, **tokenizer_kwargs):
     data = dict()
 
     data["texts"] = texts
-    if tasks_labels:
-        for tid, labels in enumerate(tasks_labels):
-            data[f"labels_{tid}"] = labels
+    data["labels"] = labels
 
     dataset = datasets.Dataset.from_dict(data)
 
     def encode(batch):
         item = tokenizer(batch["texts"], **tokenizer_kwargs)
-
-        if tasks_labels:
-            item["labels"] = [
-                batch[f"labels_{tid}"] for tid in range(len(tasks_labels))
-            ]
+        if labels:
+            item["labels"] = batch["labels"]
 
         return item
 
     dataset.set_transform(encode)
+    return dataset
+
+
+def build_dataset(texts, tokenizer, task_labels, optimize):
+    if optimize == "memory":
+        dataset = build_optimized_memory_dataset(
+            texts,
+            tokenizer,
+            task_labels,
+            padding="max_length",  #  TODO we can optimize here
+            truncation=True,
+            return_tensors="pt",
+        )
+
+    elif optimize == "compute":
+        encodings = tokenizer(texts, truncation=True, padding=True, return_tensors="pt")
+        dataset = OptimizedTaskDataset(encodings, labels=task_labels)
+    else:
+        raise ValueError(f"'optimize' value {optimize} is not supported.")
+
     return dataset
