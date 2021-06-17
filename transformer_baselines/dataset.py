@@ -5,39 +5,37 @@ import datasets
 
 
 class OptimizedTaskDataset(Dataset):
-    def __init__(self, encodings, name, labels=None):
+    def __init__(self, encodings, labels=None):
         self.encodings = encodings
         self.labels = labels
-        self.name = name
 
     def __getitem__(self, idx):
-        item = {key: torch.tensor(val[idx]) for key, val in self.encodings.items()}
+        item = {key: val[idx] for key, val in self.encodings.items()}
         if self.labels:
             item["labels"] = torch.tensor(self.labels[idx])
-        item["name"] = self.name
         return item
 
     def __len__(self):
-        return len(self.labels)
+        return self.encodings["input_ids"].shape[0]
 
 
-class TokenizingDataset(Dataset):
-    def __init__(self, texts: List[str], labels: List, tokenizer, name, **tokenizer_kwargs):
-        self.texts = texts
-        self.tokenizer = tokenizer
-        self.tokenizer_kwargs = tokenizer_kwargs
-        self.labels = labels
-        self.name = name
+# class TokenizingDataset(Dataset):
+#     def __init__(
+#         self, texts: List[str], labels: List, tokenizer, name, **tokenizer_kwargs
+#     ):
+#         self.texts = texts
+#         self.tokenizer = tokenizer
+#         self.tokenizer_kwargs = tokenizer_kwargs
+#         self.labels = labels
 
-    def __getitem__(self, idx):
-        item = self.tokenizer(self.texts[idx], **self.tokenizer_kwargs)
-        if self.labels:
-            item["labels"] = torch.tensor(self.labels[idx])
-        item["name"] = self.name
-        return item
+#     def __getitem__(self, idx):
+#         item = self.tokenizer(self.texts[idx], **self.tokenizer_kwargs)
+#         if self.labels:
+#             item["labels"] = torch.tensor(self.labels[idx])
+#         return item
 
-    def __len__(self):
-        return len(self.labels)
+#     def __len__(self):
+#         return len(self.labels)
 
 
 def build_optimized_memory_dataset(
@@ -66,7 +64,7 @@ def build_optimized_memory_dataset(
     return dataset
 
 
-def build_dataset(texts, tokenizer, task_labels, optimize, name):
+def build_dataset(texts, tokenizer, task_labels, optimize):
     if optimize == "memory":
         dataset = build_optimized_memory_dataset(
             texts,
@@ -78,12 +76,9 @@ def build_dataset(texts, tokenizer, task_labels, optimize, name):
         )
 
     elif optimize == "compute":
-        encodings = tokenizer(
-            texts, truncation=True, padding=True, return_tensors="pt"
-        )
-        dataset = OptimizedTaskDataset(encodings, labels=task_labels, name=name)
+        encodings = tokenizer(texts, truncation=True, padding=True, return_tensors="pt")
+        dataset = OptimizedTaskDataset(encodings, labels=task_labels)
     else:
         raise ValueError(f"'optimize' value {optimize} is not supported.")
 
     return dataset
-
