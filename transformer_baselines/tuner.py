@@ -42,8 +42,6 @@ class Tuner:
     def fit(
         self,
         tasks: List,
-        validation_texts: List[str] = None,
-        validation_split: float = 0.2,
         **training_args,
     ):
 
@@ -54,12 +52,8 @@ class Tuner:
         #  TODO handling training args is still WIP
         training_args = include_defaults(training_args, "train")
 
-        # train_loader = DataLoader(
-        #     dataset, batch_size=training_args["batch_size"], shuffle=True
-        # )
-
         for t in tasks:
-            t.initialize(self.tokenizer)
+            t.initialize(self.base_encoder, self.tokenizer)
 
         self.model = MultiHeadModel(
             encoder=encoder,
