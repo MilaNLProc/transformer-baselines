@@ -23,39 +23,31 @@ class TestTuner_basic(unittest.TestCase):
         """Test basic case with multitask learning."""
         labels_A = [0, 1, 0, 1, 0, 1, 0, 1]
         labels_B = [1, 0, 1, 0, 1, 0, 1, 0]
-        task_A = ClassificationTask("bert-base-uncased", labels_A)
-        task_B = ClassificationTask("bert-base-uncased", labels_B)
+
+        task_A = ClassificationTask(
+            model_name="bert-base-uncased",
+            texts=["test", "gigi"] * 4,
+            labels=labels_A,
+            optimize="memory",
+        )
+        task_B = ClassificationTask(
+            model_name="bert-base-uncased",
+            texts=["test", "gigi"] * 4,
+            labels=labels_B,
+            optimize="memory",
+        )
 
         t = Tuner("bert-base-uncased", "bert-base-uncased")
-        t.fit(["test", "gigi"] * 4, [task_A, task_B], optimize="compute", batch_size=4)
+        t.fit(tasks=[task_A, task_B], batch_size=4)
 
         y_preds = t.predict(["test", "gigi"] * 4, optimize="compute")
+        print(y_preds)
 
         self.assertEqual(
             len(y_preds), 2, "The number of label lists must be equal to tasks"
         )
         self.assertEqual(y_preds, [labels_A, labels_B])
 
-        del t
 
-    def test_basic_multitask_memory(self):
-        """Test basic case with multitask learning."""
-        labels_A = [0, 1, 0, 1, 0, 1, 0, 1]
-        labels_B = [1, 0, 1, 0, 1, 0, 1, 0]
-        task_A = ClassificationTask("bert-base-uncased", labels_A)
-        task_B = ClassificationTask("bert-base-uncased", labels_B)
-
-        t = Tuner("bert-base-uncased", "bert-base-uncased")
-        t.fit(["test", "gigi"] * 4, [task_A, task_B], optimize="memory", batch_size=4)
-
-        y_preds = t.predict(["test", "gigi"] * 4, optimize="memory")
-
-        self.assertEqual(
-            len(y_preds), 2, "The number of label lists must be equal to tasks"
-        )
-        self.assertEqual(y_preds, [labels_A, labels_B])
-
-        del t
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()
