@@ -3,7 +3,7 @@ from typing import List, Dict
 from transformers import AutoConfig, AutoTokenizer, AutoModel, AdamW
 import torch.nn as nn
 from torch.utils.data import DataLoader
-from transformer_baselines.tasks import ClassificationTask
+from transformer_baselines.tasks import ClassificationTask, NERTask
 from transformer_baselines.dataset import (
     OptimizedTaskDataset,
     build_dataset,
@@ -145,7 +145,7 @@ class MultiHeadModel(pl.LightningModule):
         return loaders
 
     def forward(self, input_ids: dict, **encoder_kwargs):
-        out = self.encoder(input_ids, **encoder_kwargs)[1]
+        out = self.encoder(input_ids, **encoder_kwargs)
         return out
 
     def training_step(self, batch, batch_idx):
@@ -158,12 +158,15 @@ class MultiHeadModel(pl.LightningModule):
 
             hidden = self(input_ids, attention_mask=attention_mask)
 
-            output = self.heads[tid](hidden)
+            output = self.heads[tid](hidden[self.tasks[tid].hidden_idx])
 
-            loss.append(self.tasks[tid].loss(labels, output))
+            loss.append(self.tasks[tid].loss(labels, output, attention_mask))
 
         return torch.stack(loss).sum()
 
     def configure_optimizers(self):
         optim = AdamW(self.parameters(), lr=self.hparams.learning_rate)
         return optim
+
+
+
