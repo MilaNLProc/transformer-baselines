@@ -5,9 +5,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from transformer_baselines.tasks import ClassificationTask
 from transformer_baselines.dataset import (
-    OptimizedTaskDataset,
     build_dataset,
-    build_optimized_memory_dataset,
 )
 import torch
 from tqdm import tqdm
@@ -96,7 +94,8 @@ class Tuner:
             self.model.eval()
 
             batch_outputs = list()
-            for batch in dataloader:
+
+            for batch in tqdm(dataloader, desc="Batch"):
 
                 input_ids = batch["input_ids"].to(self.device)
                 attention_mask = batch["attention_mask"].to(self.device)
