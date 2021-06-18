@@ -1,3 +1,4 @@
+from transformer_baselines.heads import AutoHead
 from transformers import AutoModelForSequenceClassification
 from transformers.models.auto.configuration_auto import AutoConfig
 from transformers import AutoTokenizer
@@ -6,10 +7,11 @@ from transformer_baselines.dataset import *
 
 # TODO: Task should be an abstract class
 class ClassificationTask:
+    TASK_TYPE = "sentence_classification"
+
     def __init__(self, texts, labels, optimize="compute"):
 
         self.texts = texts
-        self.hidden_idx = 1
         # TODO we might think of using sklearn's LabelEncoder here for broader support
         self.labels = labels
         self.optimize = optimize
@@ -18,12 +20,10 @@ class ClassificationTask:
 
     def initialize(self, model_name, tokenizer):
         config = AutoConfig.from_pretrained(
-           model_name, num_labels=self.num_labels, finetuning_task="custom"
+            model_name, num_labels=self.num_labels, finetuning_task="custom"
         )
 
-        self.head = AutoModelForSequenceClassification.from_pretrained(
-            model_name, config=config
-        ).classifier
+        self.head = AutoHead.from_pretrained(model_name, config, self.TASK_TYPE)
 
         self.dataset = build_dataset(self.texts, tokenizer, self.labels, self.optimize)
 

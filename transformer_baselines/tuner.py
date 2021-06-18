@@ -155,17 +155,14 @@ class MultiHeadModel(pl.LightningModule):
             attention_mask = inner_batch["attention_mask"]
             labels = inner_batch["labels"]
 
-            hidden = self(input_ids, attention_mask=attention_mask)
+            encoder_outputs = self(input_ids, attention_mask=attention_mask)
 
-            output = self.heads[tid](hidden[self.tasks[tid].hidden_idx])
+            logits = self.heads[tid](encoder_outputs)
 
-            loss.append(self.tasks[tid].loss(labels, output, attention_mask))
+            loss.append(self.tasks[tid].loss(labels, logits, attention_mask))
 
         return torch.stack(loss).sum()
 
     def configure_optimizers(self):
         optim = AdamW(self.parameters(), lr=self.hparams.learning_rate)
         return optim
-
-
-

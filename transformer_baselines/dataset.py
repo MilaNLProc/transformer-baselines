@@ -3,6 +3,7 @@ import torch
 import datasets
 import numpy as np
 
+
 class OptimizedTaskDataset(Dataset):
     def __init__(self, encodings, labels=None):
         self.encodings = encodings
@@ -15,8 +16,7 @@ class OptimizedTaskDataset(Dataset):
         return item
 
     def __len__(self):
-        return len(self.labels)
-
+        return self.encodings["input_ids"].shape[0]
 
 
 # class TokenizingDataset(Dataset):
@@ -57,7 +57,9 @@ def build_optimized_memory_dataset(texts, tokenizer, labels=None, **tokenizer_kw
     return dataset
 
 
-def build_dataset(texts, tokenizer, task_labels, optimize, return_offsets_mapping=False):
+def build_dataset(
+    texts, tokenizer, task_labels, optimize, return_offsets_mapping=False
+):
     if optimize == "memory":
         dataset = build_optimized_memory_dataset(
             texts,
@@ -66,12 +68,17 @@ def build_dataset(texts, tokenizer, task_labels, optimize, return_offsets_mappin
             padding="max_length",  #  TODO we can optimize here
             truncation=True,
             return_tensors="pt",
-            return_offsets_mapping=return_offsets_mapping
+            return_offsets_mapping=return_offsets_mapping,
         )
 
     elif optimize == "compute":
-        encodings = tokenizer(texts, truncation=True, padding=True, return_tensors="pt",
-                              return_offsets_mapping=return_offsets_mapping)
+        encodings = tokenizer(
+            texts,
+            truncation=True,
+            padding=True,
+            return_tensors="pt",
+            return_offsets_mapping=return_offsets_mapping,
+        )
         dataset = OptimizedTaskDataset(encodings, labels=task_labels)
     else:
         raise ValueError(f"'optimize' value {optimize} is not supported.")
@@ -93,6 +100,7 @@ def encode_tags(tags, encodings, tag2id):
 
     return encoded_labels
 
+
 def build_ner_dataset(texts, tokenizer, task_labels, optimize, tag2id):
     if optimize == "memory":
         raise NotImplementedError()
@@ -106,8 +114,14 @@ def build_ner_dataset(texts, tokenizer, task_labels, optimize, tag2id):
         #     return_offsets_mapping=True
         # )
     elif optimize == "compute":
-        encodings = tokenizer(texts, is_split_into_words=True, truncation=True, padding=True, return_tensors="pt",
-                              return_offsets_mapping=True)
+        encodings = tokenizer(
+            texts,
+            is_split_into_words=True,
+            truncation=True,
+            padding=True,
+            return_tensors="pt",
+            return_offsets_mapping=True,
+        )
 
         encoded_tags = encode_tags(task_labels, encodings, tag2id)
         encodings.pop("offset_mapping")
